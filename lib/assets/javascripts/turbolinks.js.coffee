@@ -1,46 +1,36 @@
-initialized    = false
-currentState   = null
-referer        = document.location.href
-loadedAssets   = null
 pageCache      = {}
+cacheSize      = 10
+currentState   = null
+loadedAssets   = null
+
+referer        = null
+
 createDocument = null
-requestMethod  = document.cookie.match(/request_method=(\w+)/)?[1].toUpperCase() or ''
 xhr            = null
 
-visit = (url) ->
-  if browserSupportsPushState && browserIsntBuggy
-    cacheCurrentPage()
-    reflectNewUrl url
-    fetchReplacement url
-  else
-    document.location.href = url
 
-
-fetchReplacement = (url) ->
-  triggerEvent 'page:fetch'
-
-  # Remove hash from url to ensure IE 10 compatibility
-  safeUrl = removeHash url
+fetchReplacement = (url) ->  
+  rememberReferer()
+  cacheCurrentPage()
+  triggerEvent 'page:fetch', url: url
 
   xhr?.abort()
   xhr = new XMLHttpRequest
-  xhr.open 'GET', safeUrl, true
+  xhr.open 'GET', removeHashForIE10compatiblity(url), true
   xhr.setRequestHeader 'Accept', 'text/html, application/xhtml+xml, application/xml'
   xhr.setRequestHeader 'X-XHR-Referer', referer
 
-  xhr.onload = =>
+  xhr.onload = ->
     triggerEvent 'page:receive'
-    
-    if invalidContent(xhr) or assetsChanged (doc = createDocument xhr.responseText)
-      document.location.reload()
-    else
+
+    if doc = processResponse()
+      reflectNewUrl url
       changePage extractTitleAndBody(doc)...
-      reflectRedirectedUrl xhr
-      if document.location.hash
-        document.location.href = document.location.href
-      else
-        resetScrollPosition()
+      reflectRedirectedUrl()
+      resetScrollPosition()
       triggerEvent 'page:load'
+    else
+      document.location.href = url
 
   xhr.onloadend = -> xhr = null
   xhr.onabort   = -> rememberCurrentUrl()
@@ -48,21 +38,15 @@ fetchReplacement = (url) ->
 
   xhr.send()
 
-fetchHistory = (state) ->
+fetchHistory = (cachedPage) ->
   cacheCurrentPage()
-
-  if page = pageCache[state.position]
-    xhr?.abort()
-    changePage page.title, page.body
-    recallScrollPosition page
-    triggerEvent 'page:restore'
-  else
-    fetchReplacement document.location.href
+  xhr?.abort()
+  changePage cachedPage.title, cachedPage.body
+  recallScrollPosition cachedPage
+  triggerEvent 'page:restore'
 
 
 cacheCurrentPage = ->
-  rememberInitialPage()
-
   pageCache[currentState.position] =
     url:       document.location.href,
     body:      document.body,
@@ -70,7 +54,10 @@ cacheCurrentPage = ->
     positionY: window.pageYOffset,
     positionX: window.pageXOffset
 
-  constrainPageCacheTo(10)
+  constrainPageCacheTo cacheSize
+
+pagesCached = (size = cacheSize) ->
+  cacheSize = parseInt(size) if /^[\d]+$/.test size
 
 constrainPageCacheTo = (limit) ->
   for own key, value of pageCache
@@ -85,9 +72,10 @@ changePage = (title, body, csrfToken, runScripts) ->
   executeScriptTags() if runScripts
   currentState = window.history.state
   triggerEvent 'page:change'
+  triggerEvent 'page:update'
 
 executeScriptTags = ->
-  scripts = Array::slice.call document.body.getElementsByTagName 'script'
+  scripts = Array::slice.call document.body.querySelectorAll 'script:not([data-turbolinks-eval="false"])'
   for script in scripts when script.type in ['', 'text/javascript']
     copy = document.createElement 'script'
     copy.setAttribute attr.name, attr.value for attr in script.attributes
@@ -103,13 +91,16 @@ removeNoscriptTags = ->
   return
 
 reflectNewUrl = (url) ->
-  if url isnt document.location.href
-    referer = document.location.href
+  if url isnt referer
     window.history.pushState { turbolinks: true, position: currentState.position + 1 }, '', url
 
-reflectRedirectedUrl = (xhr) ->
-  if (location = xhr.getResponseHeader 'X-XHR-Current-Location') and location isnt document.location.pathname + document.location.search
-    window.history.replaceState currentState, '', location + document.location.hash
+reflectRedirectedUrl = ->
+  if location = xhr.getResponseHeader 'X-XHR-Redirected-To'
+    preservedHash = if removeHash(location) is location then document.location.hash else ''
+    window.history.replaceState currentState, '', location + preservedHash
+
+rememberReferer = ->
+  referer = document.location.href
 
 rememberCurrentUrl = ->
   window.history.replaceState { turbolinks: true, position: Date.now() }, '', document.location.href
@@ -117,18 +108,19 @@ rememberCurrentUrl = ->
 rememberCurrentState = ->
   currentState = window.history.state
 
-rememberInitialPage = ->
-  unless initialized
-    rememberCurrentUrl()
-    rememberCurrentState()
-    createDocument = browserCompatibleDocumentParser()
-    initialized = true
-
 recallScrollPosition = (page) ->
   window.scrollTo page.positionX, page.positionY
 
 resetScrollPosition = ->
-  window.scrollTo 0, 0
+  if document.location.hash
+    document.location.href = document.location.href
+  else
+    window.scrollTo 0, 0
+
+
+# Intention revealing function alias
+removeHashForIE10compatiblity = (url) ->
+  removeHash url
 
 removeHash = (url) ->
   link = url
@@ -137,27 +129,43 @@ removeHash = (url) ->
     link.href = url
   link.href.replace link.hash, ''
 
+popCookie = (name) ->
+  value = document.cookie.match(new RegExp(name+"=(\\w+)"))?[1].toUpperCase() or ''
+  document.cookie = name + '=; expires=Thu, 01-Jan-70 00:00:01 GMT; path=/'
+  value
 
-triggerEvent = (name) ->
+triggerEvent = (name, data) ->
   event = document.createEvent 'Events'
+  event.data = data if data
   event.initEvent name, true, true
   document.dispatchEvent event
 
+pageChangePrevented = ->
+  !triggerEvent 'page:before-change'
 
-invalidContent = (xhr) ->
-  !xhr.getResponseHeader('Content-Type').match /^(?:text\/html|application\/xhtml\+xml|application\/xml)(?:;|$)/
+processResponse = ->
+  clientOrServerError = ->
+    400 <= xhr.status < 600
 
-extractTrackAssets = (doc) ->
-  (node.src || node.href) for node in doc.head.childNodes when node.getAttribute?('data-turbolinks-track')?
+  validContent = ->
+    xhr.getResponseHeader('Content-Type').match /^(?:text\/html|application\/xhtml\+xml|application\/xml)(?:;|$)/
 
-assetsChanged = (doc) ->
-  loadedAssets ||= extractTrackAssets document
-  fetchedAssets  = extractTrackAssets doc
-  fetchedAssets.length isnt loadedAssets.length or intersection(fetchedAssets, loadedAssets).length isnt loadedAssets.length
+  extractTrackAssets = (doc) ->
+    (node.src || node.href) for node in doc.head.childNodes when node.getAttribute?('data-turbolinks-track')?
 
-intersection = (a, b) ->
-  [a, b] = [b, a] if a.length > b.length
-  value for value in a when value in b
+  assetsChanged = (doc) ->
+    loadedAssets ||= extractTrackAssets document
+    fetchedAssets  = extractTrackAssets doc
+    fetchedAssets.length isnt loadedAssets.length or intersection(fetchedAssets, loadedAssets).length isnt loadedAssets.length
+
+  intersection = (a, b) ->
+    [a, b] = [b, a] if a.length > b.length
+    value for value in a when value in b
+
+  if not clientOrServerError() and validContent()
+    doc = createDocument xhr.responseText
+    if doc and !assetsChanged doc
+      return doc
 
 extractTitleAndBody = (doc) ->
   title = doc.querySelector 'title'
@@ -167,12 +175,12 @@ CSRFToken =
   get: (doc = document) ->
     node:   tag = doc.querySelector 'meta[name="csrf-token"]'
     token:  tag?.getAttribute? 'content'
-    
+
   update: (latest) ->
     current = @get()
     if current.token? and latest? and current.token isnt latest
       current.node.setAttribute 'content', latest
-      
+
 browserCompatibleDocumentParser = ->
   createDocumentUsingParser = (html) ->
     (new DOMParser).parseFromString html, 'text/html'
@@ -220,7 +228,7 @@ handleClick = (event) ->
   unless event.defaultPrevented
     link = extractLink event
     if link.nodeName is 'A' and !ignoreClick(event, link)
-      visit link.href
+      visit link.href unless pageChangePrevented()
       event.preventDefault()
 
 
@@ -256,11 +264,32 @@ ignoreClick = (event, link) ->
   crossOriginLink(link) or anchoredLink(link) or nonHtmlLink(link) or noTurbolink(link) or targetLink(link) or nonStandardClick(event)
 
 
+installDocumentReadyPageEventTriggers = ->
+  document.addEventListener 'DOMContentLoaded', ( ->
+    triggerEvent 'page:change'
+    triggerEvent 'page:update'
+  ), true
+
+installJqueryAjaxSuccessPageUpdateTrigger = ->
+  if typeof jQuery isnt 'undefined'
+    jQuery(document).on 'ajaxSuccess', (event, xhr, settings) ->
+      return unless jQuery.trim xhr.responseText
+      triggerEvent 'page:update'
+
+installHistoryChangeHandler = (event) ->
+  if event.state?.turbolinks
+    if cachedPage = pageCache[event.state.position]
+      fetchHistory cachedPage
+    else
+      visit event.target.location.href
+
 initializeTurbolinks = ->
+  rememberCurrentUrl()
+  rememberCurrentState()
+  createDocument = browserCompatibleDocumentParser()
+
   document.addEventListener 'click', installClickHandlerLast, true
-  window.addEventListener 'popstate', (event) ->
-    fetchHistory event.state if event.state?.turbolinks
-  , false
+  window.addEventListener 'popstate', installHistoryChangeHandler, false
 
 browserSupportsPushState =
   window.history and window.history.pushState and window.history.replaceState and window.history.state != undefined
@@ -269,9 +298,22 @@ browserIsntBuggy =
   !navigator.userAgent.match /CriOS\//
 
 requestMethodIsSafe =
-  requestMethod in ['GET','']
+  popCookie('request_method') in ['GET','']
 
-initializeTurbolinks() if browserSupportsPushState and browserIsntBuggy and requestMethodIsSafe
+browserSupportsTurbolinks = browserSupportsPushState and browserIsntBuggy and requestMethodIsSafe
 
-# Call Turbolinks.visit(url) from client code
-@Turbolinks = { visit }
+installDocumentReadyPageEventTriggers()
+installJqueryAjaxSuccessPageUpdateTrigger()
+
+if browserSupportsTurbolinks
+  visit = fetchReplacement
+  initializeTurbolinks()
+else
+  visit = (url) -> document.location.href = url
+
+# Public API
+#   Turbolinks.visit(url)
+#   Turbolinks.pagesCached()
+#   Turbolinks.pagesCached(20)
+#   Turbolinks.supported
+@Turbolinks = { visit, pagesCached, supported: browserSupportsTurbolinks }

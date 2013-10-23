@@ -1,3 +1,83 @@
+## Turbolinks 2.0.0 (unreleased) ##
+
+*   Trigger page:update on page:change as well as jQuery's ajaxSuccess, if jQuery is available.
+    This allows you to bind listeners to both full page changes and partial ajax updates.
+    If you're not using jQuery, you can trigger page:update yourself on XMLHttpRequest to
+    achieve the same result.
+    
+    *DHH*
+    
+
+*   Trigger page:change on DOMContentLoaded so you can bind initializers that need to be run 
+    either on initial or subsequent page loads. This might be backwards incompatible, so we
+    are also bumping the major version.
+    
+    *DHH*
+
+*   Expire `request_method` cookie after reading it.
+
+    *Nick Reed*
+
+*   Trigger events on DOMContentLoaded and jQuery's ajaxSuccess regardless of whether Turbolinks
+    is initialized or not.
+
+    *Nick Reed*
+    
+## Turbolinks 1.3.0 (July 11, 2013) ##
+
+*   Change URL *after* fetching page.
+
+    *Marek Labos*
+
+*   Fix compatibility with `link_to :back`.
+
+    *Marek Labos*
+
+*   Send correct referer after asset change detected.
+
+    *Marek Labos*
+    
+*   Add the `page:before-change` event, triggered when a Turbolinks-enabled link is clicked.
+    Can be used to cancel the Turbolinks process.
+
+    *Nick Reed*
+
+*   Add Turbolinks.pagesCached() to the public API for getting and setting the size of the page cache.
+
+    *Nick Reed*
+
+## Turbolinks 1.2.0 (June 2, 2013) ##
+
+*   Handle 5xx responses
+
+    *Marek Labos*
+
+*   Add the ability to not execute scripts on turbolinks page loads by
+    specifying `data-turbolinks-eval=false` on the `<script>` tag. For example:
+    `<script type="text/javascript" data-turbolinks-eval=false>`
+
+    *Mario Visic*
+
+*   Workaround for WebKit history state [bug](https://bugs.webkit.org/show_bug.cgi?id=93506) 
+    with regards to the handling of 4xx responses.
+    
+    *Yasuharu Ozaki*
+    
+*   Extracted `fetchReplacement()` onload response-handling logic out into `validateResponse()`.
+
+    *Nick Reed*
+
+*   Changed response header name from `X-XHR-Current-Location` to `X-XHR-Redirected-To`.  The
+    header will only be sent if there has been a redirect.  Fixes compatibility issue when 
+    using `redirect_to` with options such as anchors or a trailing slash by storing the redirect
+    location in a session variable and then using that value to set the response header.
+
+    *Yasuharu Ozaki*
+
+*   Escape URLs when checking for cross-origin redirects.
+
+    *Nick Reed*
+
 ## Turbolinks 1.1.1 (April 3, 2013) ##
 
 *   Improve performance of `constrainPageCacheTo`, `executeScriptTags`, and `removeNoscriptTags`

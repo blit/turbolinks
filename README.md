@@ -18,29 +18,49 @@ In any case, the benefit can be up to [twice as fast](https://github.com/stevekl
 The best way to find out just how fast it is? Try it on your own application. It hardly takes any effort at all.
 
 
-No jQuery or any other framework
+No jQuery or any other library
 --------------------------------
 
-Turbolinks is designed to be as light-weight as possible (so you won't think twice about using it even for mobile stuff). It does not require jQuery or any other framework to work. But it works great _with_ jQuery or Prototype or whatever else have you.
+Turbolinks is designed to be as light-weight as possible (so you won't think twice about using it even for mobile stuff). It does not require jQuery or any other library to work. But it works great _with_ the jQuery or Prototype framework, or whatever else have you.
 
 
 Events
 ------
 
-Since pages will change without a full reload with Turbolinks, you can't by default rely on `DOMContentLoaded` to trigger your JavaScript code or jQuery.ready(). Instead, Turbolinks fires events on `document` to provide hooks into the lifecycle of the page:
+With Turbolinks pages will change without a full reload, so you can't rely on `DOMContentLoaded` or `jQuery.ready()` to trigger your code. Instead Turbolinks fires events on `document` to provide hooks into the lifecycle of the page.
 
-* `page:fetch`   starting to fetch the target page (only called if loading fresh, not from cache).
-* `page:load`    fetched page is being retrieved fresh from the server.
-* `page:restore` fetched page is being retrieved from the 10-slot client-side cache.
-* `page:change`  page has changed to the newly fetched version.
-* `page:receive` page has been fetched from the server, but not yet parsed.
+***Load* a fresh version of a page from the server:**
+* `page:before-change` a Turbolinks-enabled link has been clicked *(see below for more details)*
+* `page:fetch` starting to fetch a new target page
+* `page:receive` the page has been fetched from the server, but not yet parsed
+* `page:change` the page has been parsed and changed to the new version and on DOMContentLoaded
+* `page:update` is triggered whenever page:change is PLUS on jQuery's ajaxSucess, if jQuery is available (otherwise you can manually trigger it when calling XMLHttpRequest in your own code)
+* `page:load` is fired at the end of the loading process.
 
-So if you wanted to have a client-side spinner, you could listen for `page:fetch` to start it and `page:receive` to stop it.
+Handlers bound to the `page:before-change` event may return `false`, which will cancel the Turbolinks process.
+
+By default, Turbolinks caches 10 of these page loads. It listens to the [popstate](https://developer.mozilla.org/en-US/docs/DOM/Manipulating_the_browser_history#The_popstate_event) event and attempts to restore page state from the cache when it's triggered. When `popstate` is fired the following process happens:
+
+***Restore* a cached page from the client-side cache:**
+* `page:change` page has changed to the cached page.
+* `page:restore` is fired at the end of restore process.
+
+The number of pages Turbolinks caches can be configured to suit your application's needs:
+
+```javascript
+// View the current cache size
+Turbolinks.pagesCached();
+
+// Set the cache size
+Turbolinks.pagesCached(20);
+```
+
+To implement a client-side spinner, you could listen for `page:fetch` to start it and `page:receive` to stop it.
 
     document.addEventListener("page:fetch", startSpinner);
     document.addEventListener("page:receive", stopSpinner);
-    
-If you have DOM transformation that are not idempotent (the best way), you can hook them to happen only on `page:load` instead of `page:change` (as that would run them again on the cached pages).
+
+DOM transformations that are idempotent are best. If you have transformations that are not, hook them to happen only on `page:load` instead of `page:change` (as that would run them again on the cached pages).
 
 Initialization
 --------------
@@ -62,7 +82,14 @@ Opting out of Turbolinks
 
 By default, all internal HTML links will be funneled through Turbolinks, but you can opt out by marking links or their parent container with `data-no-turbolink`. For example, if you mark a div with `data-no-turbolink`, then all links inside of that div will be treated as regular links. If you mark the body, every link on that entire page will be treated as regular links.
 
-Note that internal links to files not ending in .html, or having no extension, will automatically be opted out of Turbolinks. So links to /images/panda.gif will just work as expected.
+```html
+<a href="/">Home (via Turbolinks)</a>
+<div id="some-div" data-no-turbolink>
+  <a href="/">Home (without Turbolinks)</a>
+</div>
+```
+
+Note that internal links to files containing a file extension other than **.html** will automatically be opted out of Turbolinks. So links to /images/panda.gif will just work as expected.
 
 Also, Turbolinks is installed as the last click handler for links. So if you install another handler that calls event.preventDefault(), Turbolinks will not run. This ensures that you can safely use Turbolinks with stuff like `data-method`, `data-remote`, or `data-confirm` from Rails.
 
@@ -85,7 +112,10 @@ Asset change detection
 
 You can track certain assets, like application.js and application.css, that you want to ensure are always of the latest version inside a Turbolinks session. This is done by marking those asset links with data-turbolinks-track, like so:
 
-```<link href="/assets/application-9bd64a86adb3cd9ab3b16e9dca67a33a.css" rel="stylesheet" type="text/css" data-turbolinks-track>```
+```html
+<link href="/assets/application-9bd64a86adb3cd9ab3b16e9dca67a33a.css" rel="stylesheet"
+      type="text/css" data-turbolinks-track>
+```
 
 If those assets change URLs (embed an md5 stamp to ensure this), the page will do a full reload instead of going through Turbolinks. This ensures that all Turbolinks sessions will always be running off your latest JavaScript and CSS.
 
@@ -95,14 +125,22 @@ When this happens, you'll technically be requesting the same page twice. Once th
 Evaluating script tags
 ----------------------
 
-Turbolinks will evaluate any script tags in pages it visit, if those tags do not have a type or if the type is text/javascript. All other script tags will be ignored.
+Turbolinks will evaluate any script tags in pages it visits, if those tags do not have a type or if the type is text/javascript. All other script tags will be ignored.
 
-As a rule of thumb when switching to Turbolinks, move all of your javascript tags inside the `head` and then work backwards, only moving javascript code back to the body if absolutely necessary.
+As a rule of thumb when switching to Turbolinks, move all of your javascript tags inside the `head` and then work backwards, only moving javascript code back to the body if absolutely necessary. If you have any script tags in the body you do not want to be re-evaluated then you can set the `data-turbolinks-eval` attribute to `false`:
+
+```html
+<script type="text/javascript" data-turbolinks-eval=false>
+  console.log("I'm only run once on the initial page load");
+</script>
+```
 
 Triggering a Turbolinks visit manually
 ---------------------------------------
 
 You can use `Turbolinks.visit(path)` to go to a URL through Turbolinks.
+
+You can also use `redirect_via_turbolinks_to` in Rails to perform a redirect via Turbolinks.
 
 
 Full speed for pushState browsers, graceful fallback for everything else
@@ -116,7 +154,7 @@ Compatibility
 
 Turbolinks is designed to work with any browser that fully supports pushState and all the related APIs. This includes Safari 6.0+ (but not Safari 5.1.x!), IE10, and latest Chromes and Firefoxes.
 
-Do note that existing JavaScript libraries may not all be compatible with Turbolinks out of the box due to the change in instantiation cycle. You might very well have to modify them to work with Turbolinks' new set of events.  For help with this, check out the [Turbolinks Compatibility](http://reed.github.com/turbolinks-compatibility) project.
+Do note that existing JavaScript libraries may not all be compatible with Turbolinks out of the box due to the change in instantiation cycle. You might very well have to modify them to work with Turbolinks' new set of events.  For help with this, check out the [Turbolinks Compatibility](http://reed.github.io/turbolinks-compatibility) project.
 
 
 Installation
@@ -127,6 +165,13 @@ Installation
 1. Add `//= require turbolinks` to your Javascript manifest file (usually found at `app/assets/javascripts/application.js`).
 1. Restart your server and you're now using turbolinks!
 
+Language Ports
+--------------
+
+*These projects are not affiliated with or endorsed by the Rails Turbolinks team.*
+
+* [Flask Turbolinks](https://github.com/lepture/flask-turbolinks) (Python Flask)
+* [ASP.NET MVC Turbolinks](https://github.com/kazimanzurrashid/aspnetmvcturbolinks)
 
 Credits
 -------
