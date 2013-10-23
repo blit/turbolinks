@@ -1,6 +1,8 @@
 Turbolinks
 ===========
 
+This repo is turbo without the coffee, because DHH loves his [cappacinios](https://github.com/rails/turbolinks/pull/11#issuecomment-8937214)
+
 Turbolinks makes following links in your web application faster. Instead of letting the browser recompile the JavaScript and CSS between each page change, it keeps the current page instance alive and replaces only the body and the title in the head. Think CGI vs persistent process.
 
 This is similar to [pjax](https://github.com/defunkt/jquery-pjax), but instead of worrying about what element on the page to replace, and tailoring the server-side response to fit, we replace the entire body. This means that you get the bulk of the speed benefits from pjax (no recompiling of the JavaScript or CSS) without having to tailor the server-side response. It just works.
